@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/home/xadix0wy/.claude/plugins/cache/claude-plugins-official/superpowers/5.0.2/skills/brainstorming/scripts/start-server.sh --project-dir /home/xadix0wy/remove-bg-własne)",
+      "WebSearch"
+    ]
+  }
+}
