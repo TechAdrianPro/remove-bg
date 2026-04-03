@@ -6,7 +6,7 @@ Inteligentne usuwanie tła ze zdjęć. Hybrydowe przetwarzanie: model ONNX w prz
 
 ## Funkcje
 
-- **Usuwanie tła** — model RMBG-1.4 (ONNX) bezpośrednio w przeglądarce
+- **Usuwanie tła** — model RMBG-2.0 (ONNX) bezpośrednio w przeglądarce
 - **Slider przed/po** — interaktywne porównanie oryginału z wynikiem
 - **Zmiana tła** — presetowe kolory, własny kolor, własne zdjęcie jako tło
 - **Gumka** — ręczna korekta maski po przetworzeniu
@@ -17,7 +17,7 @@ Inteligentne usuwanie tła ze zdjęć. Hybrydowe przetwarzanie: model ONNX w prz
 ## Architektura
 
 ```
-Frontend (Vanilla JS)  →  ONNX Runtime Web (RMBG-1.4, ~44MB)
+Frontend (Vanilla JS)  →  ONNX Runtime Web (RMBG-2.0, ~366MB INT8)
                        ↘  FastAPI + rembg (fallback dla dużych zdjęć)
 ```
 

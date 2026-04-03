@@ -1,7 +1,11 @@
 importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js');
 
 let session = null;
-const MODEL_SIZE = 1024; // RMBG-1.4 fixed input size
+const MODEL_SIZE = 1024; // RMBG-2.0 fixed input size
+
+// RMBG-2.0 normalization (ImageNet stats)
+const NORM_MEAN = [0.485, 0.456, 0.406];
+const NORM_STD = [0.229, 0.224, 0.225];
 
 async function loadModel() {
   if (session) return;
@@ -11,10 +15,10 @@ async function loadModel() {
   const providers = ['webgl', 'wasm'];
   for (const provider of providers) {
     try {
-      session = await ort.InferenceSession.create('/models/modnet.onnx', {
+      session = await ort.InferenceSession.create('/models/rmbg-2.0.onnx', {
         executionProviders: [provider],
       });
-      postMessage({ type: 'log', message: `Model loaded (${provider})` });
+      postMessage({ type: 'log', message: `Model loaded: RMBG-2.0 (${provider})` });
       return;
     } catch (e) {
       // Try next provider
@@ -32,29 +36,40 @@ function preprocessImage(imageData, srcWidth, srcHeight) {
   ctx.drawImage(srcCanvas, 0, 0, MODEL_SIZE, MODEL_SIZE);
   const resized = ctx.getImageData(0, 0, MODEL_SIZE, MODEL_SIZE);
 
-  // RMBG-1.4: normalize to [-0.5, 0.5] via pixel/255 - 0.5
+  // RMBG-2.0: normalize with ImageNet mean/std: (pixel/255 - mean) / std
   const pixels = MODEL_SIZE * MODEL_SIZE;
   const float32 = new Float32Array(3 * pixels);
 
   for (let i = 0; i < pixels; i++) {
-    float32[i]             = resized.data[i * 4]     / 255 - 0.5; // R
-    float32[pixels + i]    = resized.data[i * 4 + 1] / 255 - 0.5; // G
-    float32[2 * pixels + i] = resized.data[i * 4 + 2] / 255 - 0.5; // B
+    float32[i]              = (resized.data[i * 4]     / 255 - NORM_MEAN[0]) / NORM_STD[0]; // R
+    float32[pixels + i]     = (resized.data[i * 4 + 1] / 255 - NORM_MEAN[1]) / NORM_STD[1]; // G
+    float32[2 * pixels + i] = (resized.data[i * 4 + 2] / 255 - NORM_MEAN[2]) / NORM_STD[2]; // B
   }
 
   return float32;
 }
 
+function sigmoid(x) {
+  // Numerically stable: clamp to avoid exp overflow
+  const v = Math.max(-500, Math.min(500, x));
+  return 1 / (1 + Math.exp(-v));
+}
+
 function postprocessMask(output, srcWidth, srcHeight) {
-  // Output is alpha matte [1,1,1024,1024], values in [0,1]
+  // RMBG-2.0 output is raw logits [1,1,1024,1024], apply sigmoid to get [0,1]
   const maskData = output instanceof Float32Array ? output : new Float32Array(output);
+  const expectedLen = MODEL_SIZE * MODEL_SIZE;
+  if (maskData.length < expectedLen) {
+    throw new Error(`Unexpected model output size: ${maskData.length}, expected ${expectedLen}`);
+  }
 
   const maskCanvas = new OffscreenCanvas(MODEL_SIZE, MODEL_SIZE);
   const maskCtx = maskCanvas.getContext('2d');
   const maskImage = maskCtx.createImageData(MODEL_SIZE, MODEL_SIZE);
 
-  for (let i = 0; i < MODEL_SIZE * MODEL_SIZE; i++) {
-    const val = Math.round(Math.max(0, Math.min(1, maskData[i])) * 255);
+  for (let i = 0; i < expectedLen; i++) {
+    const alpha = sigmoid(maskData[i]);
+    const val = Math.round(alpha * 255);
     maskImage.data[i * 4]     = 255;
     maskImage.data[i * 4 + 1] = 255;
     maskImage.data[i * 4 + 2] = 255;
@@ -93,8 +108,12 @@ onmessage = async (e) => {
       postMessage({ type: 'progress', step: 'Przetwarzanie...' });
       const input = preprocessImage(imageData, width, height);
       const tensor = new ort.Tensor('float32', input, [1, 3, MODEL_SIZE, MODEL_SIZE]);
-      const results = await session.run({ 'input': tensor });
-      const outputData = results['output'].data;
+      const results = await session.run({ 'pixel_values': tensor });
+      const outputTensor = results['alphas'];
+      if (!outputTensor) {
+        throw new Error('Model output missing "alphas" tensor');
+      }
+      const outputData = outputTensor.data;
 
       postMessage({ type: 'progress', step: 'Generowanie maski...' });
       const mask = postprocessMask(outputData, width, height);
